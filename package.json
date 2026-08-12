@@ -1,0 +1,36 @@
+{
+  "name": "pi-model-dial",
+  "version": "0.1.0",
+  "description": "A minimal Agent Mode dial for pi",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "coding-agent",
+    "tui"
+  ],
+  "license": "MIT",
+  "files": [
+    "index.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.1",
+    "@earendil-works/pi-tui": "^0.84.1",
+    "typescript": "^5.9.3"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "packageManager": "pnpm@11.21.0"
+}
