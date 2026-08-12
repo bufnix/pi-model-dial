@@ -66,7 +66,10 @@ const MODE_DEFINITIONS: Record<AgentMode, ModeDefinition> = {
 };
 
 const STATE_ENTRY = "agent-mode-state";
-const STATUS_ID = "agent-mode";
+// pi-bufnix-tui sorts extension statuses by ID. This keeps the mode after
+// pi-rewind-hook's "rewind" status while the ID itself remains display-only.
+const STATUS_ID = "selected-agent-mode";
+const STATUS_ICON = "";
 
 class AgentModeEditor extends CustomEditor {
 	onOpenDial?: () => void;
@@ -229,7 +232,7 @@ export default function modelDialExtension(pi: ExtensionAPI): void {
 			STATUS_ID,
 			ctx.ui.theme.fg(
 				MODE_DEFINITIONS[activeMode].themeColor,
-				`agent:${activeMode.toLowerCase()}`,
+				`${STATUS_ICON} ${activeMode.toLowerCase()}`,
 			),
 		);
 	}
