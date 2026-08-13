@@ -29,6 +29,7 @@ interface ModelDefinition {
 interface ModeDefinition {
 	agent: ModelDefinition;
 	oracle: ModelDefinition;
+	icon: string;
 	themeColor: ThemeColor;
 	description: string;
 	instructions: string;
@@ -62,6 +63,7 @@ const MODE_DEFINITIONS: Record<AgentMode, ModeDefinition> = {
 			thinkingLevel: "max",
 		},
 		themeColor: "thinkingLow",
+		icon: "󰡳",
 		description: "Fast reasoning for simple tasks",
 		instructions:
 			"Prioritize speed and simplicity. Use brief reasoning, avoid unnecessary exploration, and make the smallest correct change.",
@@ -78,6 +80,7 @@ const MODE_DEFINITIONS: Record<AgentMode, ModeDefinition> = {
 			thinkingLevel: "max",
 		},
 		themeColor: "thinkingMedium",
+		icon: "󰡵",
 		description: "Balanced reasoning for everyday work",
 		instructions:
 			"Use balanced reasoning. Read the relevant context, make focused changes, and verify the result without over-investigating.",
@@ -94,6 +97,7 @@ const MODE_DEFINITIONS: Record<AgentMode, ModeDefinition> = {
 			thinkingLevel: "xhigh",
 		},
 		themeColor: "thinkingHigh",
+		icon: "󰊚",
 		description: "Deep reasoning for hard tasks",
 		instructions:
 			"Reason deeply. Investigate the relevant context, consider edge cases, and validate the work before finishing.",
@@ -110,6 +114,7 @@ const MODE_DEFINITIONS: Record<AgentMode, ModeDefinition> = {
 			thinkingLevel: "max",
 		},
 		themeColor: "thinkingMax",
+		icon: "󰡴",
 		description: "Maximum effort for the hardest tasks",
 		instructions:
 			"Use maximum care and reasoning. Investigate thoroughly, compare viable approaches, account for risks and edge cases, and validate the work rigorously.",
@@ -125,21 +130,24 @@ const AUTONOMY_SELECTION_EVENT = "bufnix:autonomy-level-selection";
 interface AutonomyState {
 	icon: string;
 	themeColor: ThemeColor;
+	level: string;
 }
 
 function parseAutonomySelection(data: unknown): AutonomyState | undefined {
 	if (typeof data !== "object" || data === null) return undefined;
-	const candidate = data as { icon?: unknown; themeColor?: unknown };
+	const candidate = data as { icon?: unknown; themeColor?: unknown; level?: unknown };
 	if (
 		typeof candidate.icon !== "string" ||
 		candidate.icon.length === 0 ||
-		typeof candidate.themeColor !== "string"
+		typeof candidate.themeColor !== "string" ||
+		typeof candidate.level !== "string"
 	) {
 		return undefined;
 	}
 	return {
 		icon: candidate.icon,
 		themeColor: candidate.themeColor as ThemeColor,
+		level: candidate.level,
 	};
 }
 
@@ -564,7 +572,7 @@ export default function modelDialExtension(pi: ExtensionAPI): void {
 						const definition = MODE_DEFINITIONS[activeMode];
 						const modePart = theme.fg(
 							definition.themeColor,
-							`${STATUS_ICON} ${activeMode.toLowerCase()}`,
+							`${definition.icon} ${activeMode.toLowerCase()}`,
 						);
 						if (!activeAutonomy) return modePart;
 						return (
@@ -572,7 +580,9 @@ export default function modelDialExtension(pi: ExtensionAPI): void {
 							" " +
 							theme.bold(
 								theme.fg(activeAutonomy.themeColor, activeAutonomy.icon),
-							)
+							) +
+							" " +
+							theme.fg(activeAutonomy.themeColor, activeAutonomy.level)
 						);
 					},
 				);
