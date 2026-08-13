@@ -2,6 +2,7 @@ import {
 	CustomEditor,
 	type ExtensionAPI,
 	type ExtensionContext,
+	type KeybindingsManager,
 	type Theme,
 	type ThemeColor,
 } from "@earendil-works/pi-coding-agent";
@@ -11,6 +12,8 @@ import {
 	truncateToWidth,
 	visibleWidth,
 	type Component,
+	type EditorTheme,
+	type TUI,
 } from "@earendil-works/pi-tui";
 
 const MODES = ["Low", "Medium", "High", "Ultra"] as const;
@@ -121,10 +124,44 @@ const AGENT_ICON = "";
 const ORACLE_ICON = "";
 const STATUS_ICON = "";
 
+type BorderPaint = (text: string) => string;
+
 class AgentModeEditor extends CustomEditor {
+	onCycleMode?: () => void;
 	onOpenDial?: () => void;
+	private readonly getModeBorder: () => BorderPaint | undefined;
+
+	constructor(
+		tui: TUI,
+		theme: EditorTheme,
+		keybindings: KeybindingsManager,
+		getModeBorder: () => BorderPaint | undefined,
+	) {
+		super(tui, theme, keybindings);
+		this.getModeBorder = getModeBorder;
+	}
+
+	// The base editor reads this.borderColor on every render and Pi keeps it
+	// synced with the thinking level (and bash mode). Swap in the active agent
+	// mode color for the duration of each render so the input frame always
+	// reflects the mode instead.
+	override render(width: number): string[] {
+		const modeBorder = this.getModeBorder();
+		if (!modeBorder) return super.render(width);
+		const previous = this.borderColor;
+		this.borderColor = modeBorder;
+		try {
+			return super.render(width);
+		} finally {
+			this.borderColor = previous;
+		}
+	}
 
 	override handleInput(data: string): void {
+		if (matchesKey(data, Key.shift("tab"))) {
+			this.onCycleMode?.();
+			return;
+		}
 		if (matchesKey(data, Key.ctrl("s"))) {
 			this.onOpenDial?.();
 			return;
@@ -286,6 +323,7 @@ export default function modelDialExtension(pi: ExtensionAPI): void {
 	let activeMode: AgentMode = "Medium";
 	let activeSelection: AgentModeSelection | undefined;
 	let dialOpen = false;
+	let modeCycleQueue: Promise<void> = Promise.resolve();
 
 	function updateStatus(ctx: ExtensionContext): void {
 		ctx.ui.setStatus(
@@ -379,6 +417,18 @@ export default function modelDialExtension(pi: ExtensionAPI): void {
 		return true;
 	}
 
+	function queueModeCycle(ctx: ExtensionContext): void {
+		modeCycleQueue = modeCycleQueue
+			.then(async () => {
+				const currentIndex = MODES.indexOf(activeMode);
+				const nextMode = MODES[(currentIndex + 1) % MODES.length];
+				await activateMode(nextMode, ctx);
+			})
+			.catch((error: unknown) => {
+				ctx.ui.notify(`Could not cycle Agent Mode: ${String(error)}`, "error");
+			});
+	}
+
 	async function showDial(ctx: ExtensionContext): Promise<void> {
 		if (ctx.mode !== "tui") {
 			ctx.ui.notify("The Agent Mode dial requires interactive mode", "warning");
@@ -446,7 +496,14 @@ export default function modelDialExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		if (ctx.mode === "tui") {
 			ctx.ui.setEditorComponent((tui, theme, keybindings) => {
-				const editor = new AgentModeEditor(tui, theme, keybindings);
+				const editor = new AgentModeEditor(
+					tui,
+					theme,
+					keybindings,
+					() => (text: string) =>
+						ctx.ui.theme.fg(MODE_DEFINITIONS[activeMode].themeColor, text),
+				);
+				editor.onCycleMode = () => queueModeCycle(ctx);
 				editor.onOpenDial = () => {
 					void showDial(ctx).catch((error: unknown) => {
 						ctx.ui.notify(`Could not open Agent Mode dial: ${String(error)}`, "error");

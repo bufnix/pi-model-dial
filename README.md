@@ -9,7 +9,9 @@ A minimal [pi](https://pi.dev) extension with four Agent Modes. Each mode select
 | **High** | `opencode-go/deepseek-v4-pro` at `max` | `openai-codex/gpt-5.6-sol` at `xhigh` |
 | **Ultra** | `openai-codex/gpt-5.6-sol` at `xhigh` | `openai-codex/gpt-5.6-sol` at `max` |
 
-Press **Ctrl+S** in pi's editor to open the dial. Use **Left/Right** (or Tab) to turn it, **Enter** to select, and **Esc** to cancel.
+Press **Shift+Tab** in pi's editor to cycle `Low → Medium → High → Ultra → Low`, replacing pi's default thinking-level cycle. Press **Ctrl+S** to open the dial; use **Left/Right** (or Tab) to turn it, **Enter** to select, and **Esc** to cancel.
+
+The editor border follows the active mode's color rather than the thinking level.
 
 Each mode switches the active agent model and thinking level, validates and records the oracle selection, then adds a small matching instruction to the system prompt. The complete agent/oracle selection is persisted in the current session and published on the `bufnix:agent-mode-selection` extension event. With `pi-bufnix-tui`, both selections are shown in the footer.
 
