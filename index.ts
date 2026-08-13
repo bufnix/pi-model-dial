@@ -117,12 +117,54 @@ const MODE_DEFINITIONS: Record<AgentMode, ModeDefinition> = {
 };
 
 const STATE_ENTRY = "agent-mode-state";
-// pi-bufnix-tui sorts extension statuses by ID. This keeps the mode after
-// pi-rewind-hook's "rewind" status while the ID itself remains display-only.
-const STATUS_ID = "selected-agent-mode";
 const AGENT_ICON = "";
 const ORACLE_ICON = "";
 const STATUS_ICON = "";
+const AUTONOMY_SELECTION_EVENT = "bufnix:autonomy-level-selection";
+
+interface AutonomyState {
+	icon: string;
+	themeColor: ThemeColor;
+}
+
+function parseAutonomySelection(data: unknown): AutonomyState | undefined {
+	if (typeof data !== "object" || data === null) return undefined;
+	const candidate = data as { icon?: unknown; themeColor?: unknown };
+	if (
+		typeof candidate.icon !== "string" ||
+		candidate.icon.length === 0 ||
+		typeof candidate.themeColor !== "string"
+	) {
+		return undefined;
+	}
+	return {
+		icon: candidate.icon,
+		themeColor: candidate.themeColor as ThemeColor,
+	};
+}
+
+function stripAnsi(text: string): string {
+	return text
+		.replace(/\x1b\[[0-9;]*m/g, "")
+		.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "");
+}
+
+function attachLabelToTopBorder(
+	topLine: string,
+	label: string,
+	borderPaint: BorderPaint,
+	width: number,
+): string {
+	const plain = stripAnsi(topLine);
+	const labelWidth = visibleWidth(label);
+	if (labelWidth + 2 >= width) return topLine;
+	const dashRun = plain.match(/─+$/)?.[0] ?? "";
+	if (dashRun.length < labelWidth + 2) return topLine;
+	const prefix = plain.slice(0, plain.length - dashRun.length);
+	const remaining = dashRun.length - labelWidth;
+	const styled = borderPaint(`${prefix}${"─".repeat(remaining - 1)}`) + ` ${label}`;
+	return truncateToWidth(styled, width, "");
+}
 
 type BorderPaint = (text: string) => string;
 
@@ -130,15 +172,18 @@ class AgentModeEditor extends CustomEditor {
 	onCycleMode?: () => void;
 	onOpenDial?: () => void;
 	private readonly getModeBorder: () => BorderPaint | undefined;
+	private readonly getBorderLabel: () => string;
 
 	constructor(
 		tui: TUI,
 		theme: EditorTheme,
 		keybindings: KeybindingsManager,
 		getModeBorder: () => BorderPaint | undefined,
+		getBorderLabel: () => string,
 	) {
 		super(tui, theme, keybindings);
 		this.getModeBorder = getModeBorder;
+		this.getBorderLabel = getBorderLabel;
 	}
 
 	// The base editor reads this.borderColor on every render and Pi keeps it
@@ -147,11 +192,21 @@ class AgentModeEditor extends CustomEditor {
 	// reflects the mode instead.
 	override render(width: number): string[] {
 		const modeBorder = this.getModeBorder();
-		if (!modeBorder) return super.render(width);
+		const label = this.getBorderLabel();
+		if (!modeBorder && !label) return super.render(width);
 		const previous = this.borderColor;
-		this.borderColor = modeBorder;
+		this.borderColor = modeBorder ?? previous;
 		try {
-			return super.render(width);
+			const lines = super.render(width);
+			if (label && lines.length > 0) {
+				lines[0] = attachLabelToTopBorder(
+					lines[0],
+					label,
+					this.borderColor,
+					width,
+				);
+			}
+			return lines;
 		} finally {
 			this.borderColor = previous;
 		}
@@ -322,18 +377,20 @@ class ModeDial implements Component {
 export default function modelDialExtension(pi: ExtensionAPI): void {
 	let activeMode: AgentMode = "Medium";
 	let activeSelection: AgentModeSelection | undefined;
+	let activeAutonomy: AutonomyState | undefined;
+	let currentTui: TUI | undefined;
 	let dialOpen = false;
 	let modeCycleQueue: Promise<void> = Promise.resolve();
 
-	function updateStatus(ctx: ExtensionContext): void {
-		ctx.ui.setStatus(
-			STATUS_ID,
-			ctx.ui.theme.fg(
-				MODE_DEFINITIONS[activeMode].themeColor,
-				`${STATUS_ICON} ${activeMode.toLowerCase()}`,
-			),
-		);
-	}
+	const unsubscribeAutonomySelection = pi.events.on(
+		AUTONOMY_SELECTION_EVENT,
+		(data) => {
+			const parsed = parseAutonomySelection(data);
+			if (!parsed) return;
+			activeAutonomy = parsed;
+			currentTui?.requestRender();
+		},
+	);
 
 	async function activateMode(
 		mode: AgentMode,
@@ -402,7 +459,6 @@ export default function modelDialExtension(pi: ExtensionAPI): void {
 				modelName: oracleModel.name ?? oracleModel.id,
 			},
 		};
-		updateStatus(ctx);
 		pi.events.emit(AGENT_MODE_SELECTION_EVENT, activeSelection);
 
 		if (options.persist !== false) {
@@ -496,12 +552,29 @@ export default function modelDialExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		if (ctx.mode === "tui") {
 			ctx.ui.setEditorComponent((tui, theme, keybindings) => {
+				currentTui = tui;
 				const editor = new AgentModeEditor(
 					tui,
 					theme,
 					keybindings,
 					() => (text: string) =>
 						ctx.ui.theme.fg(MODE_DEFINITIONS[activeMode].themeColor, text),
+					() => {
+						const theme = ctx.ui.theme;
+						const definition = MODE_DEFINITIONS[activeMode];
+						const modePart = theme.fg(
+							definition.themeColor,
+							`${STATUS_ICON} ${activeMode.toLowerCase()}`,
+						);
+						if (!activeAutonomy) return modePart;
+						return (
+							modePart +
+							" " +
+							theme.bold(
+								theme.fg(activeAutonomy.themeColor, activeAutonomy.icon),
+							)
+						);
+					},
 				);
 				editor.onCycleMode = () => queueModeCycle(ctx);
 				editor.onOpenDial = () => {
@@ -524,5 +597,9 @@ export default function modelDialExtension(pi: ExtensionAPI): void {
 		}
 
 		await activateMode(activeMode, ctx, { persist: false, notify: false });
+	});
+
+	pi.on("session_shutdown", () => {
+		unsubscribeAutonomySelection();
 	});
 }
