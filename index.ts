@@ -14,50 +14,98 @@ import {
 } from "@earendil-works/pi-tui";
 
 const MODES = ["Low", "Medium", "High", "Ultra"] as const;
-type AgentMode = (typeof MODES)[number];
-type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export type AgentMode = (typeof MODES)[number];
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
-interface ModeDefinition {
+interface ModelDefinition {
 	provider: string;
 	modelId: string;
 	thinkingLevel: ThinkingLevel;
+}
+
+interface ModeDefinition {
+	agent: ModelDefinition;
+	oracle: ModelDefinition;
 	themeColor: ThemeColor;
 	description: string;
 	instructions: string;
 }
 
+export interface AgentModeModelSelection {
+	provider: string;
+	modelId: string;
+	modelName: string;
+	thinkingLevel: ThinkingLevel;
+}
+
+export interface AgentModeSelection {
+	mode: AgentMode;
+	agent: AgentModeModelSelection;
+	oracle: AgentModeModelSelection;
+}
+
+export const AGENT_MODE_SELECTION_EVENT = "bufnix:agent-mode-selection";
+
 const MODE_DEFINITIONS: Record<AgentMode, ModeDefinition> = {
 	Low: {
-		provider: "opencode-go",
-		modelId: "deepseek-v4-flash",
-		thinkingLevel: "max",
+		agent: {
+			provider: "opencode-go",
+			modelId: "deepseek-v4-flash",
+			thinkingLevel: "max",
+		},
+		oracle: {
+			provider: "opencode-go",
+			modelId: "gpt-5.6-luna",
+			thinkingLevel: "max",
+		},
 		themeColor: "thinkingLow",
 		description: "Fast reasoning for simple tasks",
 		instructions:
 			"Prioritize speed and simplicity. Use brief reasoning, avoid unnecessary exploration, and make the smallest correct change.",
 	},
 	Medium: {
-		provider: "opencode-go",
-		modelId: "gpt-5.6-luna",
-		thinkingLevel: "max",
+		agent: {
+			provider: "opencode-go",
+			modelId: "gpt-5.6-luna",
+			thinkingLevel: "max",
+		},
+		oracle: {
+			provider: "opencode-go",
+			modelId: "deepseek-v4-pro",
+			thinkingLevel: "max",
+		},
 		themeColor: "thinkingMedium",
 		description: "Balanced reasoning for everyday work",
 		instructions:
 			"Use balanced reasoning. Read the relevant context, make focused changes, and verify the result without over-investigating.",
 	},
 	High: {
-		provider: "opencode-go",
-		modelId: "kimi-k3",
-		thinkingLevel: "max",
+		agent: {
+			provider: "opencode-go",
+			modelId: "deepseek-v4-pro",
+			thinkingLevel: "max",
+		},
+		oracle: {
+			provider: "openai-codex",
+			modelId: "gpt-5.6-sol",
+			thinkingLevel: "xhigh",
+		},
 		themeColor: "thinkingHigh",
 		description: "Deep reasoning for hard tasks",
 		instructions:
 			"Reason deeply. Investigate the relevant context, consider edge cases, and validate the work before finishing.",
 	},
 	Ultra: {
-		provider: "openai-codex",
-		modelId: "gpt-5.6-sol",
-		thinkingLevel: "xhigh",
+		agent: {
+			provider: "openai-codex",
+			modelId: "gpt-5.6-sol",
+			thinkingLevel: "xhigh",
+		},
+		oracle: {
+			provider: "openai-codex",
+			modelId: "gpt-5.6-sol",
+			thinkingLevel: "max",
+		},
 		themeColor: "thinkingMax",
 		description: "Maximum effort for the hardest tasks",
 		instructions:
@@ -69,6 +117,8 @@ const STATE_ENTRY = "agent-mode-state";
 // pi-bufnix-tui sorts extension statuses by ID. This keeps the mode after
 // pi-rewind-hook's "rewind" status while the ID itself remains display-only.
 const STATUS_ID = "selected-agent-mode";
+const AGENT_ICON = "";
+const ORACLE_ICON = "";
 const STATUS_ICON = "";
 
 class AgentModeEditor extends CustomEditor {
@@ -95,6 +145,7 @@ class ModeDial implements Component {
 	constructor(
 		private readonly theme: Theme,
 		initialMode: AgentMode,
+		private readonly getModelName: (definition: ModelDefinition) => string,
 		private readonly onChange: () => void,
 		private readonly done: (mode: AgentMode | null) => void,
 	) {
@@ -188,11 +239,18 @@ class ModeDial implements Component {
 			return gap + styled;
 		}).join("");
 
-		const modelName = `${definition.provider}/${definition.modelId}`;
-		const agent =
-			theme.fg("text", " Agent:  ") +
-			theme.fg("muted", `${modelName}  `) +
-			theme.bold(theme.fg(definition.themeColor, definition.thinkingLevel));
+		const modelLine = (icon: string, model: ModelDefinition): string =>
+			theme.fg("mdLink", ` ${icon}`) +
+			"  " +
+			theme.fg("muted", model.provider) +
+			theme.fg("dim", " · ") +
+			theme.fg("text", this.getModelName(model)) +
+			theme.fg("dim", " · ") +
+			theme.bold(
+				theme.fg(definition.themeColor, `${STATUS_ICON} ${model.thinkingLevel}`),
+			);
+		const agent = modelLine(AGENT_ICON, definition.agent);
+		const oracle = modelLine(ORACLE_ICON, definition.oracle);
 		const description = theme.fg("muted", ` ${definition.description}`);
 		const helpText = "↔ turn  ·  enter select  ·  esc cancel";
 		const help =
@@ -206,6 +264,7 @@ class ModeDial implements Component {
 			row(`${" ".repeat(trackInset)}${labels}`),
 			row(),
 			row(agent),
+			row(oracle),
 			row(),
 			row(description),
 			row(),
@@ -225,6 +284,7 @@ class ModeDial implements Component {
 
 export default function modelDialExtension(pi: ExtensionAPI): void {
 	let activeMode: AgentMode = "Medium";
+	let activeSelection: AgentModeSelection | undefined;
 	let dialOpen = false;
 
 	function updateStatus(ctx: ExtensionContext): void {
@@ -243,37 +303,76 @@ export default function modelDialExtension(pi: ExtensionAPI): void {
 		options: { persist?: boolean; notify?: boolean } = {},
 	): Promise<boolean> {
 		const definition = MODE_DEFINITIONS[mode];
-		const model = ctx.modelRegistry.find(definition.provider, definition.modelId);
-		if (!model) {
+		const agentModel = ctx.modelRegistry.find(
+			definition.agent.provider,
+			definition.agent.modelId,
+		);
+		if (!agentModel) {
 			if (options.notify !== false) {
 				ctx.ui.notify(
-					`Agent mode ${mode}: model ${definition.provider}/${definition.modelId} was not found`,
+					`Agent mode ${mode}: agent model ${definition.agent.provider}/${definition.agent.modelId} was not found`,
 					"error",
 				);
 			}
 			return false;
 		}
 
-		if (!(await pi.setModel(model))) {
+		const oracleModel = ctx.modelRegistry.find(
+			definition.oracle.provider,
+			definition.oracle.modelId,
+		);
+		if (!oracleModel) {
 			if (options.notify !== false) {
 				ctx.ui.notify(
-					`Agent mode ${mode}: no credentials for ${definition.provider}/${definition.modelId}`,
+					`Agent mode ${mode}: oracle model ${definition.oracle.provider}/${definition.oracle.modelId} was not found`,
+					"error",
+				);
+			}
+			return false;
+		}
+		if (!ctx.modelRegistry.hasConfiguredAuth(oracleModel)) {
+			if (options.notify !== false) {
+				ctx.ui.notify(
+					`Agent mode ${mode}: no credentials for oracle ${definition.oracle.provider}/${definition.oracle.modelId}`,
 					"error",
 				);
 			}
 			return false;
 		}
 
-		pi.setThinkingLevel(definition.thinkingLevel);
+		if (!(await pi.setModel(agentModel))) {
+			if (options.notify !== false) {
+				ctx.ui.notify(
+					`Agent mode ${mode}: no credentials for agent ${definition.agent.provider}/${definition.agent.modelId}`,
+					"error",
+				);
+			}
+			return false;
+		}
+
+		pi.setThinkingLevel(definition.agent.thinkingLevel);
 		activeMode = mode;
+		activeSelection = {
+			mode,
+			agent: {
+				...definition.agent,
+				modelName: agentModel.name ?? agentModel.id,
+				thinkingLevel: pi.getThinkingLevel(),
+			},
+			oracle: {
+				...definition.oracle,
+				modelName: oracleModel.name ?? oracleModel.id,
+			},
+		};
 		updateStatus(ctx);
+		pi.events.emit(AGENT_MODE_SELECTION_EVENT, activeSelection);
 
 		if (options.persist !== false) {
-			pi.appendEntry(STATE_ENTRY, { mode });
+			pi.appendEntry(STATE_ENTRY, activeSelection);
 		}
 		if (options.notify !== false) {
 			ctx.ui.notify(
-				`Agent mode: ${mode} · ${definition.provider}/${definition.modelId} · ${pi.getThinkingLevel()}`,
+				`Agent mode: ${mode} · agent ${activeSelection.agent.provider}/${activeSelection.agent.modelId} ${activeSelection.agent.thinkingLevel} · oracle ${activeSelection.oracle.provider}/${activeSelection.oracle.modelId} ${activeSelection.oracle.thinkingLevel}`,
 				"info",
 			);
 		}
@@ -294,6 +393,9 @@ export default function modelDialExtension(pi: ExtensionAPI): void {
 					new ModeDial(
 						theme,
 						activeMode,
+						(definition) =>
+							ctx.modelRegistry.find(definition.provider, definition.modelId)?.name ??
+							definition.modelId,
 						() => tui.requestRender(),
 						done,
 					),
